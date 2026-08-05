@@ -8,17 +8,24 @@
 import SwiftUI
 
 struct ContentView: View {
+    @Environment(AppState.self) private var appState
+
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+        Group {
+            if appState.hasCompletedOnboarding {
+                RootTabView()
+                    .transition(.opacity)
+            } else {
+                OnboardingView()
+                    .transition(.opacity.combined(with: .scale(scale: 1.04)))
+            }
         }
-        .padding()
+        .animation(.smooth(duration: 0.45), value: appState.hasCompletedOnboarding)
     }
 }
 
 #Preview {
     ContentView()
+        .environment(AppState())
+        .environment(ReaderSettings())
 }
