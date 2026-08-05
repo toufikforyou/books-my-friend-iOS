@@ -1,0 +1,16 @@
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+*.xcuserdatad
+xcuserdata/
+
+# Xcode per-user schemes and breakpoints
+*.xcscmblueprint
+*.xccheckout
+
+# Test output
+*.xcresult
+
+# macOS
+.DS_Store
