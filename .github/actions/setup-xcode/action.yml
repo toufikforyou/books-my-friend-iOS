@@ -1,0 +1,54 @@
+name: Set up Xcode
+description: >-
+  Selects an Xcode toolchain and verifies its iOS SDK is new enough to build
+  this project. Shared by the test and release workflows so both agree on which
+  toolchain "green" was measured against.
+
+inputs:
+  xcode-version:
+    description: 'Pin a specific Xcode, e.g. "26.6". Empty selects the newest installed.'
+    required: false
+    default: ''
+  project:
+    description: Xcode project used to read the deployment target.
+    required: false
+    default: BooksMyFriend.xcodeproj
+
+runs:
+  using: composite
+  steps:
+    - name: Select Xcode
+      shell: bash
+      run: |
+        set -euo pipefail
+        requested="${{ inputs.xcode-version }}"
+        if [ -n "$requested" ]; then
+          app="/Applications/Xcode_${requested}.app"
+          if [ ! -d "$app" ]; then
+            echo "::error::Xcode ${requested} is not installed on this runner."
+            echo "Available: $(ls -d /Applications/Xcode*.app | tr '\n' ' ')"
+            exit 1
+          fi
+        else
+          app="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+        fi
+        sudo xcode-select -s "$app/Contents/Developer"
+        xcodebuild -version
+
+    - name: Verify the iOS SDK is new enough
+      shell: bash
+      run: |
+        set -euo pipefail
+        # The deployment target is the floor. Building against an older SDK
+        # fails as a wall of unrelated "unknown API" errors, which is a much
+        # worse thing to hand someone than one clear message.
+        required="$(sed -n 's/.*IPHONEOS_DEPLOYMENT_TARGET = \([0-9.]*\);.*/\1/p' \
+          "${{ inputs.project }}/project.pbxproj" | sort -V | tail -1)"
+        available="$(xcodebuild -showsdks \
+          | sed -n 's/.*iphonesimulator\([0-9.]*\).*/\1/p' | sort -V | tail -1)"
+        echo "project targets iOS ${required}; runner has simulator SDK ${available}"
+        if [ "$(printf '%s\n%s\n' "$required" "$available" | sort -V | tail -1)" != "$available" ]; then
+          echo "::error::Runner's iOS SDK ${available} is older than the project's target ${required}."
+          echo "Use a newer runner image, or pin xcode-version to one that ships it."
+          exit 1
+        fi

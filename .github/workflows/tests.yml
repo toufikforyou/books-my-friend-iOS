@@ -1,0 +1,131 @@
+name: Tests
+
+# Reusable: this is the single definition of "the tests pass", called by both
+# CI and Release so a release can never ship something CI would have rejected.
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: >-
+          macOS runner image. Must carry an Xcode with the iOS SDK this project
+          targets; the SDK guard below fails loudly if it does not.
+        type: string
+        required: false
+        default: macos-26
+      xcode-version:
+        description: >-
+          Pin a specific Xcode, e.g. "26.6". Empty selects the newest installed.
+        type: string
+        required: false
+        default: ''
+
+env:
+  PROJECT: BooksMyFriend.xcodeproj
+  SCHEME: BooksMyFriend
+  # Keep xcodebuild output interleaved and in order in the Actions log.
+  NSUnbufferedIO: "YES"
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Xcode
+        uses: ./.github/actions/setup-xcode
+        with:
+          xcode-version: ${{ inputs.xcode-version }}
+          project: BooksMyFriend.xcodeproj
+
+      - name: Resolve a simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          # Pick a real device by UDID rather than naming one: device names come
+          # and go between runner images, and a stale name fails the whole run.
+          udid="$(xcrun simctl list devices available --json | python3 -c '
+          import json, sys
+          data = json.load(sys.stdin)["devices"]
+          best = None
+          for runtime, devices in data.items():
+              if "iOS" not in runtime:
+                  continue
+              version = tuple(int(p) for p in runtime.split(".iOS-")[-1].split("-"))
+              for device in devices:
+                  if "iPhone" not in device["name"]:
+                      continue
+                  if best is None or version > best[0]:
+                      best = (version, device["udid"], device["name"], runtime)
+          if best is None:
+              sys.exit("no available iPhone simulator")
+          print(best[1])
+          ')"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          xcrun simctl list devices available | grep -F "$udid"
+
+      - name: Boot the simulator
+        run: |
+          set -euo pipefail
+          # Booting up front keeps the first test from racing simulator startup.
+          xcrun simctl boot "${{ steps.sim.outputs.udid }}" || true
+          xcrun simctl bootstatus "${{ steps.sim.outputs.udid }}" -b
+
+      - name: Build for testing
+        run: |
+          set -euo pipefail
+          xcodebuild build-for-testing \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Debug \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Run unit and UI tests
+        run: |
+          set -euo pipefail
+          # Serial execution: the SwiftData suite shares one ModelContainer and
+          # wipes it between tests, so parallel clones would clear each other's
+          # fixtures.
+          xcodebuild test-without-building \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath build/DerivedData \
+            -parallel-testing-enabled NO \
+            -resultBundlePath build/TestResults.xcresult
+
+      - name: Summarise results
+        if: always()
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          [ -d build/TestResults.xcresult ] || exit 0
+          xcrun xcresulttool get test-results summary \
+            --path build/TestResults.xcresult --format json > build/summary.json
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          s = json.load(open("build/summary.json"))
+          print("## Test results\n")
+          print(f"**{s.get('result', 'unknown')}** — "
+                f"{s.get('passedTests', 0)} passed, "
+                f"{s.get('failedTests', 0)} failed, "
+                f"{s.get('skippedTests', 0)} skipped\n")
+          for failure in s.get("testFailures", []):
+              print(f"- `{failure.get('testName')}` — {failure.get('failureText')}")
+          PY
+
+      - name: Upload result bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ github.run_id }}
+          path: build/TestResults.xcresult
+          retention-days: 14
+          if-no-files-found: warn
