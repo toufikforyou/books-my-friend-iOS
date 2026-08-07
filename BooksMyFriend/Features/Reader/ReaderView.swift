@@ -485,7 +485,7 @@ struct ReaderView: View {
 
         // CoreText layout for a 600-page book is too slow for the main thread.
         let chapters = await Task.detached(priority: .userInitiated) {
-            Paginator.paginateBook(chapters: bodies, attributes: attributes, size: size)
+            await Paginator.paginateBook(chapters: bodies, attributes: attributes, size: size)
         }.value
 
         let result = BookPagination(chapters: chapters)
