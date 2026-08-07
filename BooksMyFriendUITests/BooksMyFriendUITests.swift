@@ -176,15 +176,25 @@ final class BooksMyFriendUITests: XCTestCase {
                 .waitForExistence(timeout: 20)
         )
 
+        let highlightMenu = app.menuItems["Highlight"]
+
         // Press a coordinate rather than the text view element: the pages live
         // in a LazyHStack, so `textViews.firstMatch` can resolve to an
-        // unrealized neighbour with an infinite frame.
-        app.windows.firstMatch
-            .coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.35))
-            .press(forDuration: 1.2)
+        // unrealized neighbour with an infinite frame. On CI, a single point
+        // can occasionally land between lines, so try a couple of nearby
+        // points before failing.
+        let window = app.windows.firstMatch
+        let selectionPoints = [
+            CGVector(dx: 0.4, dy: 0.35),
+            CGVector(dx: 0.5, dy: 0.42),
+            CGVector(dx: 0.35, dy: 0.5)
+        ]
+        for point in selectionPoints where !highlightMenu.exists {
+            window.coordinate(withNormalizedOffset: point).press(forDuration: 1.2)
+            _ = highlightMenu.waitForExistence(timeout: 2)
+        }
 
-        let highlightMenu = app.menuItems["Highlight"]
-        XCTAssertTrue(highlightMenu.waitForExistence(timeout: 5), "custom Highlight menu never appeared")
+        XCTAssertTrue(highlightMenu.exists, "custom Highlight menu never appeared")
         highlightMenu.tap()
 
         // The edit-menu submenu exposes its rows as unlabelled cells, so the
