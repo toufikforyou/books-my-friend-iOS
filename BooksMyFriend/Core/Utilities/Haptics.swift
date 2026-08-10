@@ -7,6 +7,7 @@ import UIKit
 
 /// Thin wrapper so feedback intent reads clearly at the call site and can be
 /// muted from one place (e.g. a future accessibility preference).
+
 @MainActor
 enum Haptics {
     static func tap() {
